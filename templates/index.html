@@ -6,10 +6,25 @@
     <title>Loan Predictor</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%); }
+        .hero {
+            background: linear-gradient(90deg,#6a11cb,#2575fc);
+            color: white;
+            padding: 1.25rem;
+            border-radius: .5rem;
+            box-shadow: 0 6px 18px rgba(37,117,252,0.12);
+        }
+        #resultBadge { font-size: 1.05rem; padding: .45rem .75rem; border-radius: .5rem; }
+    </style>
 </head>
 <body>
     <div class="container mt-5">
-        <h2 class="text-center mb-4">Loan Predictor</h2>
+        <div class="hero text-center mb-4">
+            <h2 class="mb-1">Loan Predictor</h2>
+            <div class="small opacity-75">Quick check — enter values and get an instant result</div>
+        </div>
+        <div id="formAlert" class="alert alert-danger d-none" role="alert"></div>
         <form id="loanForm">
             <div class="row mb-3">
                 <div class="col">
@@ -71,16 +86,17 @@
                     <label for="CoapplicantIncome" class="form-label">Coapplicant Income</label>
                     <input type="number" class="form-control" id="CoapplicantIncome" required>
                 </div>
-                div class="form-group">
-                    <label for="LoanAmount">Loan Amount (in thousand ₹)</label>
-                    <input type="number" class="form-control" id="LoanAmount" name="LoanAmount" placeholder="Enter loan amount" required>
+                <div class="col">
+                    <label for="LoanAmount" class="form-label">Loan Amount (₹)</label>
+                    <input type="number" class="form-control" id="LoanAmount" name="LoanAmount" placeholder="Enter loan amount in ₹ (e.g. 128000)" required>
+                    <div id="loanHelp" class="form-text text-muted">We will convert rupees to thousands for the model (e.g. 128000 → 128).</div>
                 </div>
             </div>
 
             <div class="row mb-3">
-                <div class="form-group">
-                    <label for="Loan_Amount_Term">Loan Term (in days)</label>
-                    <input type="number" class="form-control" id="Loan_Amount_Term" name="Loan_Amount_Term" placeholder="Enter loan term in days" required>
+                <div class="col">
+                    <label for="Loan_Amount_Term" class="form-label">Loan Term (in months)</label>
+                    <input type="number" class="form-control" id="Loan_Amount_Term" name="Loan_Amount_Term" placeholder="Enter loan term in months (e.g. 360)" required>
                 </div>
 
                 <div class="col">
@@ -92,12 +108,18 @@
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary mt-3">Predict Loan Status</button>
+            <button type="submit" id="submitBtn" class="btn btn-primary mt-3">
+                <span id="btnText">Predict Loan Status</span>
+                <span id="btnSpinner" class="spinner-border spinner-border-sm ms-2" role="status" aria-hidden="true" style="display:none"></span>
+            </button>
         </form>
 
         <div class="mt-4">
             <h4>Prediction Result:</h4>
-            <p id="result" class="fw-bold"></p>
+            <div id="result" class="mt-2">
+                <span id="resultBadge" class="d-inline-block"></span>
+                <div id="resultText" class="mt-2"></div>
+            </div>
         </div>
     </div>
 
@@ -106,31 +128,91 @@
 
     <script>
         const form = document.getElementById('loanForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const btnText = document.getElementById('btnText');
+        const btnSpinner = document.getElementById('btnSpinner');
+        const formAlert = document.getElementById('formAlert');
+        const resultBadge = document.getElementById('resultBadge');
+        const resultText = document.getElementById('resultText');
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+
+            // reset UI messages
+            formAlert.classList.add('d-none');
+            resultBadge.className = '';
+            resultBadge.textContent = '';
+            resultText.textContent = '';
+
+            // convert loan amount entered in rupees to thousands (model expects LoanAmount in thousands)
+            const loanAmountRupees = parseFloat(document.getElementById('LoanAmount').value);
+            const loanAmount = Number.isNaN(loanAmountRupees) ? null : parseFloat((loanAmountRupees / 1000).toFixed(2));
+
+            // client-side validation
+            const applicantIncome = parseFloat(document.getElementById('ApplicantIncome').value);
+            const loanTerm = parseFloat(document.getElementById('Loan_Amount_Term').value);
+            if (!applicantIncome || applicantIncome <= 0) {
+                formAlert.textContent = 'Please enter a valid positive Applicant Income in ₹.';
+                formAlert.classList.remove('d-none');
+                return;
+            }
+            if (!loanAmount || loanAmount <= 0) {
+                formAlert.textContent = 'Please enter a valid positive Loan Amount in ₹.';
+                formAlert.classList.remove('d-none');
+                return;
+            }
+            if (!loanTerm || loanTerm <= 0) {
+                formAlert.textContent = 'Please enter a valid positive Loan Term in months.';
+                formAlert.classList.remove('d-none');
+                return;
+            }
+
             const data = {
                 Gender: document.getElementById('Gender').value,
                 Married: document.getElementById('Married').value,
                 Dependents: document.getElementById('Dependents').value,
                 Education: document.getElementById('Education').value,
                 Self_Employed: document.getElementById('Self_Employed').value,
-                ApplicantIncome: parseFloat(document.getElementById('ApplicantIncome').value),
-                CoapplicantIncome: parseFloat(document.getElementById('CoapplicantIncome').value),
-                LoanAmount: parseFloat(document.getElementById('LoanAmount').value),
-                Loan_Amount_Term: parseFloat(document.getElementById('Loan_Amount_Term').value),
+                ApplicantIncome: applicantIncome,
+                CoapplicantIncome: parseFloat(document.getElementById('CoapplicantIncome').value) || 0,
+                LoanAmount: loanAmount,
+                Loan_Amount_Term: loanTerm,
                 Credit_History: parseFloat(document.getElementById('Credit_History').value),
                 Property_Area: document.getElementById('Property_Area').value
             };
 
-            const response = await fetch('/predict', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
+            // disable button and show spinner
+            submitBtn.disabled = true;
+            btnSpinner.style.display = 'inline-block';
+            btnText.textContent = 'Predicting...';
 
-            const result = await response.json();
-            document.getElementById('result').textContent = 
-                result.prediction === 1 ? 'Approved ✅' : 'Rejected ❌';
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) throw new Error(`Server responded ${response.status}`);
+                const result = await response.json();
+                if (result.prediction === 1) {
+                    resultBadge.className = 'badge bg-success';
+                    resultBadge.textContent = 'Approved ✅';
+                    resultText.textContent = 'Congratulations — your loan is likely to be approved.';
+                } else {
+                    resultBadge.className = 'badge bg-danger';
+                    resultBadge.textContent = 'Rejected ❌';
+                    resultText.textContent = 'Unfortunately, this combination is unlikely to be approved.';
+                }
+            } catch (err) {
+                resultBadge.className = 'badge bg-warning text-dark';
+                resultBadge.textContent = 'Error';
+                resultText.textContent = 'Error getting prediction. ' + err.message;
+            } finally {
+                submitBtn.disabled = false;
+                btnSpinner.style.display = 'none';
+                btnText.textContent = 'Predict Loan Status';
+            }
         });
     </script>
 </body>
